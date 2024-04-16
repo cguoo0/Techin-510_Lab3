@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 @dataclass
 class Prompt:
     title: str
@@ -34,6 +33,16 @@ def setup_database():
     )
     con.commit()
     return con, cur
+
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+try:
+    conn = psycopg2.connect(DATABASE_URL)
+    print("Connected to the database successfully!")
+    conn.close()
+except psycopg2.OperationalError as e:
+    print("Unable to connect to the database.")
+    print(e)
 
 def display_prompts(cur):
     cur.execute("SELECT * FROM prompts ORDER BY created_at DESC")  # Default sort by created date 
@@ -102,4 +111,24 @@ if __name__ == "__main__":
 
 
 
+if __name__ == "__main__":
+    st.title("Promptbase")
+    st.subheader("A simple app to store and retrieve prompts")
+
+    con, cur = setup_database()
+
+    new_prompt = prompt_form()
+    if new_prompt:
+        try: 
+            cur.execute(
+                "INSERT INTO prompts (title, prompt, is_favorite) VALUES (%s, %s, %s)",
+                (new_prompt.title, new_prompt.prompt, new_prompt.is_favorite)
+            )
+            con.commit()
+            st.success("Prompt added successfully!")
+        except psycopg2.Error as e:
+            st.error(f"Database error: {e}")
+
+    display_prompts(cur)
+    con.close()
 
