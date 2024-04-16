@@ -1,10 +1,9 @@
-import os
-from dataclasses import dataclass
-import datetime
-
 import streamlit as st
 import psycopg2
 from dotenv import load_dotenv
+import os
+import datetime
+from dataclasses import dataclass
 
 load_dotenv()
 
@@ -28,107 +27,107 @@ def setup_database():
             is_favorite BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )streamlit run app.pystreamlit run app.py
+        );
         """
     )
     con.commit()
     return con, cur
 
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-try:
-    conn = psycopg2.connect(DATABASE_URL)
-    print("Connected to the database successfully!")
-    conn.close()
-except psycopg2.OperationalError as e:
-    print("Unable to connect to the database.")
-    print(e)
-
-def display_prompts(cur):
-    cur.execute("SELECT * FROM prompts ORDER BY created_at DESC")  # Default sort by created date 
-    prompts = cur.fetchall()
-
-def display_prompts(cur, search_term=None):
-    if search_term:
-        # Use ILIKE for case-insensitive search
-        cur.execute("SELECT * FROM prompts WHERE title ILIKE %s ORDER BY created_at DESC", ('%' + search_term + '%',))
-    else:
-        cur.execute("SELECT * FROM prompts ORDER BY created_at DESC")
-    prompts = cur.fetchall()
-    return prompts
-
-def main():
-    st.title("Prompt Viewer")
-    search_term = st.text_input("Search for prompts by title:")
-
-    con, cur = setup_database()
-    prompts = display_prompts(cur, search_term)
-    
-
-    for prompt in prompts:
-        st.subheader(prompt[1])  # Title
-        st.write(prompt[2])  # Prompt
-        st.write("Favorite:", prompt[3])  # is_favorite
-        st.text("Created at: " + str(prompt[4]))
-        st.text("Updated at: " + str(prompt[5]))
-        st.write("---")
-
-#enter information
-# Store the initial value of widgets in session state
-title = st.text_input('title', 'enter title here')
-
-txt = st.text_area(
-    "Enter the prompt",
-    "you can enter the prompt here",
+def save_prompt(con, cur, title, prompt):
+    cur.execute(
+        "INSERT INTO prompts (title, prompt) VALUES (%s, %s)",
+        (title, prompt)
     )
+    con.commit()
+
+def search_prompts(cur, search_term, filter_date=None):
+    base_query = """
+        SELECT id, title, prompt, is_favorite, created_at FROM prompts
+        WHERE (title ILIKE %s OR prompt ILIKE %s)
+    """
+    params = ['%' + search_term + '%', '%' + search_term + '%']
+
+    if filter_date:
+        base_query += " AND DATE(created_at) = DATE(%s)"
+        params.append(filter_date)
+
+    base_query += " ORDER BY created_at DESC"
+    cur.execute(base_query, tuple(params))
+    return cur.fetchall()
+
+def delete_prompt(con, cur, prompt_id):
+    cur.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
+    con.commit()
+
+def update_prompt(con, cur, prompt_id, new_title, new_prompt):
+    cur.execute(
+        "UPDATE prompts SET title = %s, prompt = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+        (new_title, new_prompt, prompt_id)
+    )
+    con.commit()
+
+def toggle_favorite(con, cur, prompt_id):
+    cur.execute(
+        "UPDATE prompts SET is_favorite = NOT is_favorite WHERE id = %s",
+        (prompt_id,)
+    )
+    con.commit()
 
 
-#search function
 def main():
-    st.title("Prompt Viewer")
-    search_term = st.text_input("Search for prompts by title:")
-    sort_by = st.selectbox("Sort by:", options=['created_at', 'updated_at'], index=0)
-    sort_order = st.radio("Sort order:", options=['asc', 'desc'], index=1)
-
+    st.title("Promptbase")
     con, cur = setup_database()
-    prompts = display_prompts(cur, search_term, sort_by, sort_order)
+
+    # Input form for new prompts
+    with st.form(key='prompt_form'):
+        title = st.text_input("Title")
+        prompt_text = st.text_area("Prompt")
+        submit_button = st.form_submit_button(label='Save Prompt')
+    if submit_button:
+        save_prompt(con, cur, title, prompt_text)
+        st.success("Prompt saved successfully!")
+
+    # Filters for all prompts
+    st.subheader("All Saved Prompts")
+    filter_date = st.date_input("Filter prompts by date:")
+    search_term_history = st.text_input("Search prompts by title or content:")
+
+    # Button to apply filters
+    if st.button('Apply Filters'):
+        all_prompts = search_prompts(cur, search_term_history, filter_date)
+    else:
+        all_prompts = search_prompts(cur, "", None)  # No filters applied initially
     
-    for prompt in prompts:
-        st.subheader(prompt[1])  # Title
-        st.write(prompt[2])  # Prompt
-        st.write("Favorite:", prompt[3])  # is_favorite
-        st.text("Created at: " + str(prompt[4]))
-        st.text("Updated at: " + str(prompt[5]))
+
+    for result in all_prompts:
+        st.markdown(f"**{result[1]}**")  # Title
+        st.write(result[2])  # Prompt text
+        edit = st.button('Edit', key=f'edit_history{result[0]}')
+        delete = st.button('Delete', key=f'delete_history{result[0]}')
+        fav_text = 'Unmark as Favorite' if result[3] else 'Mark as Favorite'
+        fav = st.button(fav_text, key=f'fav_history{result[0]}')
+
+
+        if delete:
+            delete_prompt(con, cur, result[0])
+            st.success("Prompt deleted successfully!")
+            st.experimental_rerun()
+
+        if edit:
+            with st.form(key=f'edit_form_history{result[0]}'):
+                new_title = st.text_input("New Title", value=result[1], key=f'new_title_history{result[0]}')
+                new_prompt = st.text_area("New Prompt", value=result[2], key=f'new_prompt_history{result[0]}')
+                update_button = st.form_submit_button('Update Prompt')
+            if update_button:
+                update_prompt(con, cur, result[0], new_title, new_prompt)
+                st.success("Prompt updated successfully!")
+                st.experimental_rerun()
+
+        if fav:
+            toggle_favorite(con, cur, result[0])
+            st.success(f"Prompt marked as {'favorite' if not result[3] else 'not favorite'}!")
+            st.experimental_rerun()
         st.write("---")
 
 if __name__ == "__main__":
     main()
-
-
-    # TODO: Add a sort by date
-    # TODO: Add favorite button
-
-
-
-
-if __name__ == "__main__":
-    st.title("Promptbase")
-    st.subheader("A simple app to store and retrieve prompts")
-
-    con, cur = setup_database()
-
-    new_prompt = prompt_form()
-    if new_prompt:
-        try: 
-            cur.execute(
-                "INSERT INTO prompts (title, prompt, is_favorite) VALUES (%s, %s, %s)",
-                (new_prompt.title, new_prompt.prompt, new_prompt.is_favorite)
-            )
-            con.commit()
-            st.success("Prompt added successfully!")
-        except psycopg2.Error as e:
-            st.error(f"Database error: {e}")
-
-    display_prompts(cur)
-    con.close()
-
