@@ -16,77 +16,96 @@ class Prompt:
     updated_at: datetime.datetime = None
 
 def setup_database():
-    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
-        with con.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS prompts (
-                    id SERIAL PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    prompt TEXT NOT NULL,
-                    is_favorite BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                """
-            )
-            con.commit()
+    try:
+        with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+            with con.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS prompts (
+                        id SERIAL PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        prompt TEXT NOT NULL,
+                        is_favorite BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    """
+                )
+                con.commit()
+    except psycopg2.OperationalError as e:
+        st.error("Unable to connect to the database. Please check the connection settings.")
+        st.stop()
 
-def save_prompt(title, prompt):
-    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
-        with con.cursor() as cur:
-            cur.execute(
-                "INSERT INTO prompts (title, prompt) VALUES (%s, %s)",
-                (title, prompt)
-            )
-            con.commit()
+def save_prompt(title, prompt_text):
+    try:
+        with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO prompts (title, prompt) VALUES (%s, %s)",
+                    (title, prompt_text)
+                )
+                con.commit()
+    except psycopg2.OperationalError as e:
+        st.error("Unable to save the prompt to the database. Please try again later.")
 
 def search_prompts(search_term, filter_date=None):
-    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
-        with con.cursor() as cur:
-            base_query = """
-                SELECT id, title, prompt, is_favorite, created_at FROM prompts
-                WHERE (title ILIKE %s OR prompt ILIKE %s)
-            """
-            params = ['%' + search_term + '%', '%' + search_term + '%']
+    try:
+        with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+            with con.cursor() as cur:
+                base_query = """
+                    SELECT id, title, prompt, is_favorite, created_at FROM prompts
+                    WHERE (title ILIKE %s OR prompt ILIKE %s)
+                """
+                params = ['%' + search_term + '%', '%' + search_term + '%']
 
-            if filter_date:
-                base_query += " AND DATE(created_at) = DATE(%s)"
-                params.append(filter_date)
+                if filter_date:
+                    base_query += " AND DATE(created_at) = DATE(%s)"
+                    params.append(filter_date)
 
-            base_query += " ORDER BY created_at DESC"
-            cur.execute(base_query, tuple(params))
-            return cur.fetchall()
+                base_query += " ORDER BY created_at DESC"
+                cur.execute(base_query, tuple(params))
+                return cur.fetchall()
+    except psycopg2.OperationalError as e:
+        st.error("Unable to retrieve prompts from the database. Please try again later.")
+        return []
 
 def delete_prompt(prompt_id):
-    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
-        with con.cursor() as cur:
-            cur.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
-            con.commit()
+    try:
+        with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+            with con.cursor() as cur:
+                cur.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
+                con.commit()
+    except psycopg2.OperationalError as e:
+        st.error("Unable to delete the prompt from the database. Please try again later.")
 
 def update_prompt(prompt_id, new_title, new_prompt):
-    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
-        with con.cursor() as cur:
-            cur.execute(
-                "UPDATE prompts SET title = %s, prompt = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-                (new_title, new_prompt, prompt_id)
-            )
-            con.commit()
+    try:
+        with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "UPDATE prompts SET title = %s, prompt = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (new_title, new_prompt, prompt_id)
+                )
+                con.commit()
+    except psycopg2.OperationalError as e:
+        st.error("Unable to update the prompt in the database. Please try again later.")
 
 def toggle_favorite(prompt_id):
-    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
-        with con.cursor() as cur:
-            cur.execute(
-                "UPDATE prompts SET is_favorite = NOT is_favorite WHERE id = %s",
-                (prompt_id,)
-            )
-            con.commit()
+    try:
+        with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "UPDATE prompts SET is_favorite = NOT is_favorite WHERE id = %s",
+                    (prompt_id,)
+                )
+                con.commit()
+    except psycopg2.OperationalError as e:
+        st.error("Unable to toggle the favorite status. Please try again later.")
 
 def main():
     st.title("Promptbase")
     setup_database()
 
-    # Input form for new prompts
     with st.form(key='prompt_form'):
         title = st.text_input("Title")
         prompt_text = st.text_area("Prompt")
@@ -95,20 +114,18 @@ def main():
         save_prompt(title, prompt_text)
         st.success("Prompt saved successfully!")
 
-    # Filters for all prompts
     st.subheader("All Saved Prompts")
     filter_date = st.date_input("Filter prompts by date:")
     search_term_history = st.text_input("Search prompts by title or content:")
 
-    # Button to apply filters
     if st.button('Apply Filters'):
         all_prompts = search_prompts(search_term_history, filter_date)
     else:
-        all_prompts = search_prompts("", None)  # No filters applied initially
+        all_prompts = search_prompts("", None)
 
     for result in all_prompts:
-        st.markdown(f"**{result[1]}**")  # Title
-        st.write(result[2])  # Prompt text
+        st.markdown(f"**{result[1]}**")
+        st.write(result[2])
         edit = st.button('Edit', key=f'edit_history{result[0]}')
         delete = st.button('Delete', key=f'delete_history{result[0]}')
         fav_text = 'Unmark as Favorite' if result[3] else 'Mark as Favorite'
