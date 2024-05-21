@@ -16,67 +16,75 @@ class Prompt:
     updated_at: datetime.datetime = None
 
 def setup_database():
-    con = psycopg2.connect(os.getenv("DATABASE_URL"))
-    cur = con.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS prompts (
-            id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            prompt TEXT NOT NULL,
-            is_favorite BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """
-    )
-    con.commit()
-    return con, cur
+    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+        with con.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS prompts (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    is_favorite BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+            con.commit()
 
-def save_prompt(con, cur, title, prompt):
-    cur.execute(
-        "INSERT INTO prompts (title, prompt) VALUES (%s, %s)",
-        (title, prompt)
-    )
-    con.commit()
+def save_prompt(title, prompt):
+    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+        with con.cursor() as cur:
+            cur.execute(
+                "INSERT INTO prompts (title, prompt) VALUES (%s, %s)",
+                (title, prompt)
+            )
+            con.commit()
 
-def search_prompts(cur, search_term, filter_date=None):
-    base_query = """
-        SELECT id, title, prompt, is_favorite, created_at FROM prompts
-        WHERE (title ILIKE %s OR prompt ILIKE %s)
-    """
-    params = ['%' + search_term + '%', '%' + search_term + '%']
+def search_prompts(search_term, filter_date=None):
+    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+        with con.cursor() as cur:
+            base_query = """
+                SELECT id, title, prompt, is_favorite, created_at FROM prompts
+                WHERE (title ILIKE %s OR prompt ILIKE %s)
+            """
+            params = ['%' + search_term + '%', '%' + search_term + '%']
 
-    if filter_date:
-        base_query += " AND DATE(created_at) = DATE(%s)"
-        params.append(filter_date)
+            if filter_date:
+                base_query += " AND DATE(created_at) = DATE(%s)"
+                params.append(filter_date)
 
-    base_query += " ORDER BY created_at DESC"
-    cur.execute(base_query, tuple(params))
-    return cur.fetchall()
+            base_query += " ORDER BY created_at DESC"
+            cur.execute(base_query, tuple(params))
+            return cur.fetchall()
 
-def delete_prompt(con, cur, prompt_id):
-    cur.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
-    con.commit()
+def delete_prompt(prompt_id):
+    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+        with con.cursor() as cur:
+            cur.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
+            con.commit()
 
-def update_prompt(con, cur, prompt_id, new_title, new_prompt):
-    cur.execute(
-        "UPDATE prompts SET title = %s, prompt = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-        (new_title, new_prompt, prompt_id)
-    )
-    con.commit()
+def update_prompt(prompt_id, new_title, new_prompt):
+    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+        with con.cursor() as cur:
+            cur.execute(
+                "UPDATE prompts SET title = %s, prompt = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (new_title, new_prompt, prompt_id)
+            )
+            con.commit()
 
-def toggle_favorite(con, cur, prompt_id):
-    cur.execute(
-        "UPDATE prompts SET is_favorite = NOT is_favorite WHERE id = %s",
-        (prompt_id,)
-    )
-    con.commit()
-
+def toggle_favorite(prompt_id):
+    with psycopg2.connect(os.getenv("DATABASE_URL")) as con:
+        with con.cursor() as cur:
+            cur.execute(
+                "UPDATE prompts SET is_favorite = NOT is_favorite WHERE id = %s",
+                (prompt_id,)
+            )
+            con.commit()
 
 def main():
     st.title("Promptbase")
-    con, cur = setup_database()
+    setup_database()
 
     # Input form for new prompts
     with st.form(key='prompt_form'):
@@ -84,7 +92,7 @@ def main():
         prompt_text = st.text_area("Prompt")
         submit_button = st.form_submit_button(label='Save Prompt')
     if submit_button:
-        save_prompt(con, cur, title, prompt_text)
+        save_prompt(title, prompt_text)
         st.success("Prompt saved successfully!")
 
     # Filters for all prompts
@@ -94,10 +102,9 @@ def main():
 
     # Button to apply filters
     if st.button('Apply Filters'):
-        all_prompts = search_prompts(cur, search_term_history, filter_date)
+        all_prompts = search_prompts(search_term_history, filter_date)
     else:
-        all_prompts = search_prompts(cur, "", None)  # No filters applied initially
-    
+        all_prompts = search_prompts("", None)  # No filters applied initially
 
     for result in all_prompts:
         st.markdown(f"**{result[1]}**")  # Title
@@ -107,9 +114,8 @@ def main():
         fav_text = 'Unmark as Favorite' if result[3] else 'Mark as Favorite'
         fav = st.button(fav_text, key=f'fav_history{result[0]}')
 
-
         if delete:
-            delete_prompt(con, cur, result[0])
+            delete_prompt(result[0])
             st.success("Prompt deleted successfully!")
             st.experimental_rerun()
 
@@ -119,12 +125,12 @@ def main():
                 new_prompt = st.text_area("New Prompt", value=result[2], key=f'new_prompt_history{result[0]}')
                 update_button = st.form_submit_button('Update Prompt')
             if update_button:
-                update_prompt(con, cur, result[0], new_title, new_prompt)
+                update_prompt(result[0], new_title, new_prompt)
                 st.success("Prompt updated successfully!")
                 st.experimental_rerun()
 
         if fav:
-            toggle_favorite(con, cur, result[0])
+            toggle_favorite(result[0])
             st.success(f"Prompt marked as {'favorite' if not result[3] else 'not favorite'}!")
             st.experimental_rerun()
         st.write("---")
